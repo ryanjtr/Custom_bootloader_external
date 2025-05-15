@@ -1,0 +1,2 @@
+../Application/jump_to_app/jump_to_app.c:22:6:check_and_jump_boot_mode	8
+../Application/jump_to_app/jump_to_app.c:88:13:jump_to_application	1

@@ -1,0 +1,11 @@
+07:16:49 **** Incremental Build of configuration Debug for project custom_bootloader ****
+make -j16 all 
+arm-none-eabi-size  custom_bootloader.elf 
+   text	   data	    bss	    dec	    hex	filename
+  15232	     92	   2604	  17928	   4608	custom_bootloader.elf
+Finished building: default.size.stdout
+ 
+mkdir -p "C:/ST/STM32CubeIDE_1.15.1/STM32CubeIDE/fw/hex"
+find "C:/ST/STM32CubeIDE_1.15.1/STM32CubeIDE/fw/hex" -name "*.hex" -delete
+arm-none-eabi-objcopy -O ihex "custom_bootloader.elf" "C:/ST/STM32CubeIDE_1.15.1/STM32CubeIDE/fw/hex/custom_bootloader.hex"
+ 
