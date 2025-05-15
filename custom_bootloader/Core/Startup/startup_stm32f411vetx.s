@@ -59,7 +59,7 @@ defined in linker script */
   .type  Reset_Handler, %function
 Reset_Handler:  
  ldr   sp, =_estack    		 /* set stack pointer */
- bl  check_and_jump_boot_mode
+
 /* Call the clock system initialization function.*/
   bl  SystemInit   
 
@@ -95,6 +95,7 @@ LoopFillZerobss:
   bcc FillZerobss
 
 /* Call static constructors */
+bl  check_and_jump_boot_mode
     bl __libc_init_array
 /* Call the application's entry point.*/
 

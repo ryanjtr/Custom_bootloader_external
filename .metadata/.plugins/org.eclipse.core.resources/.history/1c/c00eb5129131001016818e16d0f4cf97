@@ -1,0 +1,239 @@
+/*
+ * uart_command.c
+ *
+ *  Created on: May 12, 2025
+ *      Author: RyanDank
+ */
+
+#include "uart_command.h"
+
+uint8_t bl_rx_buffer[BL_RX_LEN];
+static uint32_t current_write_addr = 0; // Lưu địa chỉ hiện tại để ghi tiếp
+uint8_t count_fail=0;
+//| LENGTH TO FOLLOW | COMMAND CODE | PAYLOAD LENGTH | PAYLOAD       | CRC          |
+//|------------------|--------------|----------------|---------------|--------------|
+//| 1 byte           | 1 byte       | 1 byte         | X bytes       | 4 bytes      |
+
+void bootloader_uart_read_data(void)
+{
+    uint8_t rcv_len = 0;
+
+    while (1)
+    {
+        memset(bl_rx_buffer, 0, BL_RX_LEN);
+        HAL_UART_Receive(C_UART, bl_rx_buffer, 1, HAL_MAX_DELAY);
+        rcv_len = bl_rx_buffer[0];
+        HAL_UART_Receive(C_UART, &bl_rx_buffer[1], rcv_len, HAL_MAX_DELAY);
+        if (bl_rx_buffer[1] == BL_MEM_WRITE)
+        {
+            bootloader_handle_mem_write_cmd(bl_rx_buffer);
+        }
+        else if (bl_rx_buffer[1]==BL_START_UPDATE)
+        {
+        	bootloader_handle_start_update(bl_rx_buffer);
+        }
+        else
+        {
+            printmsg("BL_DEBUG_MSG:Invalid command code received from host \n");
+        }
+    }
+}
+
+void bootloader_jump_to_user_app()
+{
+	uint8_t trigger_to_jump = *(uint8_t *)TRIGGER_JUMP_TO_APP_ADDRESS;
+	if(trigger_to_jump==0xFF)
+	{
+		HAL_FLASH_Unlock();
+		HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, TRIGGER_JUMP_TO_APP_ADDRESS, 0xBB);//trigger to jump to app after reset
+		HAL_FLASH_Lock();
+	}
+	NVIC_SystemReset();
+
+}
+
+//bank app: 0x01 0x0800 8000
+//bank backup: 0x02 0x0804 0000
+void bootloader_handle_start_update(uint8_t *pBuffer)
+{
+	volatile uint8_t app_exist_status = *(volatile uint8_t *)APP_EXIST_STATUS_ADDRESS;
+    uint32_t command_packet_len = bl_rx_buffer[0] + 1;
+    uint32_t host_crc = *((uint32_t *)(bl_rx_buffer + command_packet_len - 4));
+	if (!bootloader_verify_crc(&bl_rx_buffer[0], command_packet_len - 4, host_crc))
+	{
+		if(app_exist_status==0xAA)//start to backup app
+		{
+			execute_flash_erase(BANK_BACKUP, NUM_OF_BANK_BACKUP);
+			uint32_t length_app = *(volatile uint32_t *)LENGTH_APP;
+		    HAL_FLASH_Unlock();
+		    for (uint32_t i = 0; i < length_app; i++)
+		    {
+		        HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, START_BACKUP_ADDRESS + i, *(uint8_t*)(START_APP_ADDRESS + i));
+		    }
+		    HAL_FLASH_Lock();
+		}
+		bootloader_send_ack(1);
+	}
+}
+
+void bootloader_send_backup_to_app()
+{
+	printmsg("Update firmware fail, now using backup bank !!\r\n");
+	execute_flash_erase(BANK_APP, NUM_OF_BANK_APP);
+	HAL_FLASH_Unlock();
+	uint32_t length_app = *(volatile uint8_t *)LENGTH_APP;
+	for (uint32_t i = 0; i < length_app; i++)
+	{
+		HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, START_APP_ADDRESS + i, *(uint8_t*)(START_BACKUP_ADDRESS + i));
+	}
+	HAL_FLASH_Lock();
+    bootloader_jump_to_user_app();
+}
+
+void bootloader_handle_mem_write_cmd(uint8_t *pBuffer)
+{
+    uint8_t payload_len = pBuffer[2];
+    volatile uint8_t app_exist_status = *(volatile uint8_t *)APP_EXIST_STATUS_ADDRESS;
+    uint32_t command_packet_len = bl_rx_buffer[0] + 1;
+    uint32_t host_crc = *((uint32_t *)(bl_rx_buffer + command_packet_len - 4));
+
+    if (!bootloader_verify_crc(&bl_rx_buffer[0], command_packet_len - 4, host_crc))
+    {
+    	HAL_GPIO_TogglePin(RED_LED_GPIO_Port, RED_LED_Pin);
+
+        if (current_write_addr == 0)
+        {
+            current_write_addr = START_APP_ADDRESS;
+            execute_flash_erase(BANK_APP, NUM_OF_BANK_APP);
+        }
+
+        if (payload_len > 0)
+        {
+            execute_mem_write(&pBuffer[3], current_write_addr, payload_len); // Sửa: PAYLOAD bắt đầu từ byte thứ 4
+            current_write_addr += payload_len;
+            bootloader_send_ack(1);
+        }
+        else
+        {
+        	bootloader_send_ack(1);
+        	printmsg("Update firmware successfully \r\n");
+        	execute_flash_erase(1, 1);
+        	HAL_FLASH_Unlock();
+        	if(app_exist_status==0xFF)
+        	{
+        		HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, APP_EXIST_STATUS_ADDRESS, 0xAA);
+        	}
+        	uint32_t length_app = current_write_addr-START_APP_ADDRESS;
+        	HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, CURRENT_ADDR_STORAGE, length_app);
+        	HAL_FLASH_Lock();
+            bootloader_jump_to_user_app();
+        }
+    }
+    else
+    {
+        bootloader_send_nack();
+        if(++count_fail==5)
+        {
+        	bootloader_send_backup_to_app();
+        }
+    }
+}
+
+void bootloader_send_ack(uint8_t follow_len)
+{
+    uint8_t ack_buf[2];
+    ack_buf[0] = BL_ACK;
+    ack_buf[1] = follow_len;
+    HAL_UART_Transmit(C_UART, ack_buf, 2, HAL_MAX_DELAY);
+}
+
+void bootloader_send_nack(void)
+{
+    uint8_t nack = BL_NACK;
+    HAL_UART_Transmit(C_UART, &nack, 1, HAL_MAX_DELAY);
+}
+
+
+uint8_t bootloader_verify_crc(uint8_t *pData, uint32_t len, uint32_t crc_host)
+{
+    if (len > BL_RX_LEN)
+    {
+//        printmsg("BL_DEBUG_MSG: CRC length exceeds buffer size!\n");
+        return VERIFY_CRC_FAIL;
+    }
+
+    uint32_t uwCRCValue = 0xff;
+    uint32_t i = 0;
+    uint32_t i_data=0;
+    for (i = 0; i < len; i++)
+    {
+        i_data = pData[i];
+//        printmsg("BL_DEBUG_MSG: Processing byte %d: %x\n", i, i_data);
+        uwCRCValue = HAL_CRC_Accumulate(&hcrc, &i_data, 1);
+    }
+    __HAL_CRC_DR_RESET(&hcrc);
+
+    return (uwCRCValue == crc_host) ? VERIFY_CRC_SUCCESS : VERIFY_CRC_FAIL;
+}
+
+void bootloader_uart_write_data(uint8_t *pBuffer, uint32_t len)
+{
+    HAL_UART_Transmit(C_UART, pBuffer, len, HAL_MAX_DELAY);
+}
+
+uint8_t execute_mem_write(uint8_t *pBuffer, uint32_t mem_address, uint32_t len)
+{
+    uint8_t status = HAL_OK;
+    HAL_FLASH_Unlock();
+    for (uint32_t i = 0; i < len; i++)
+    {
+        status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, mem_address + i, pBuffer[i]);
+    }
+    HAL_FLASH_Lock();
+    return status;
+}
+
+uint8_t execute_flash_erase(uint8_t sector_number, uint8_t number_of_sector)
+{
+  // we have totally 8 sectors in STM32F411VET6 mcu .. sector[0 to 7]
+  // number_of_sector has to be in the range of 0 to 7
+  //  if sector_number = 0xff , that means mass erase !
+  // Code needs to modified if your MCU supports more flash sectors
+  FLASH_EraseInitTypeDef flashErase_handle;
+  uint32_t sectorError;
+  HAL_StatusTypeDef status;
+
+  if (number_of_sector > 8)
+    return INVALID_SECTOR;
+
+  if ((sector_number == 0xff) || (sector_number <= 7))
+  {
+    if (sector_number == (uint8_t)0xff)
+    {
+      flashErase_handle.TypeErase = FLASH_TYPEERASE_MASSERASE;
+    }
+    else
+    {
+      /*Here we are just calculating how many sectors needs to erased */
+      uint8_t remanining_sector = 8 - sector_number;
+      if (number_of_sector > remanining_sector)
+      {
+        number_of_sector = remanining_sector;
+      }
+      flashErase_handle.TypeErase = FLASH_TYPEERASE_SECTORS;
+      flashErase_handle.Sector = sector_number; // this is the initial sector
+      flashErase_handle.NbSectors = number_of_sector;
+    }
+    flashErase_handle.Banks = FLASH_BANK_1;
+
+    /*Get access to touch the flash registers */
+    HAL_FLASH_Unlock();
+    flashErase_handle.VoltageRange = FLASH_VOLTAGE_RANGE_3; // our mcu will work on this voltage range
+    status = (uint8_t)HAL_FLASHEx_Erase(&flashErase_handle, &sectorError);
+    HAL_FLASH_Lock();
+
+    return status;
+  }
+
+  return INVALID_SECTOR;
+}

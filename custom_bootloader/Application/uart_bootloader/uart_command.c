@@ -9,6 +9,9 @@
 
 uint8_t bl_rx_buffer[BL_RX_LEN];
 static uint32_t current_write_addr = 0; // Lưu địa chỉ hiện tại để ghi tiếp
+uint8_t count_fail=0;
+uint32_t start_time;
+uint32_t time_out_uart_receive = HAL_MAX_DELAY;
 
 //| LENGTH TO FOLLOW | COMMAND CODE | PAYLOAD LENGTH | PAYLOAD       | CRC          |
 //|------------------|--------------|----------------|---------------|--------------|
@@ -21,9 +24,13 @@ void bootloader_uart_read_data(void)
     while (1)
     {
         memset(bl_rx_buffer, 0, BL_RX_LEN);
-        HAL_UART_Receive(C_UART, bl_rx_buffer, 1, HAL_MAX_DELAY);
+        if(HAL_UART_Receive(C_UART, bl_rx_buffer, 1, time_out_uart_receive)==HAL_TIMEOUT)
+        {
+    		printmsg("Timeout uart !!\r\n");
+    		bootloader_send_backup_to_app();
+        }
         rcv_len = bl_rx_buffer[0];
-        HAL_UART_Receive(C_UART, &bl_rx_buffer[1], rcv_len, HAL_MAX_DELAY);
+        HAL_UART_Receive(C_UART, &bl_rx_buffer[1], rcv_len, time_out_uart_receive);
         if (bl_rx_buffer[1] == BL_MEM_WRITE)
         {
             bootloader_handle_mem_write_cmd(bl_rx_buffer);
@@ -63,37 +70,53 @@ void bootloader_handle_start_update(uint8_t *pBuffer)
 	{
 		if(app_exist_status==0xAA)//start to backup app
 		{
+			printmsg("Backup old APP \r\n");
 			execute_flash_erase(BANK_BACKUP, NUM_OF_BANK_BACKUP);
-			uint32_t length_app = *(volatile uint32_t *)CURRENT_ADDR_STORAGE;
+			uint32_t length_app = *(volatile uint32_t *)LENGTH_APP_ADDRESS;
 		    HAL_FLASH_Unlock();
 		    for (uint32_t i = 0; i < length_app; i++)
 		    {
 		        HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, START_BACKUP_ADDRESS + i, *(uint8_t*)(START_APP_ADDRESS + i));
 		    }
 		    HAL_FLASH_Lock();
+		    printmsg("status 1 app: 0x%02X \r\n",*(volatile uint8_t *)APP_EXIST_STATUS_ADDRESS);
 		}
 		bootloader_send_ack(1);
 	}
 }
 
+void bootloader_send_backup_to_app()
+{
+	printmsg("Update firmware fail, now using backup bank !!\r\n");
+	execute_flash_erase(BANK_APP, NUM_OF_BANK_APP);
+	HAL_FLASH_Unlock();
+	uint32_t length_app = *(volatile uint32_t *)LENGTH_APP_ADDRESS;
+	printmsg("length_app: 0x%08X \r\n",length_app);
+	for (uint32_t i = 0; i < length_app; i++)
+	{
+		HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, START_APP_ADDRESS + i, *(uint8_t*)(START_BACKUP_ADDRESS + i));
+	}
+	HAL_FLASH_Lock();
+    bootloader_jump_to_user_app();
+}
+
 void bootloader_handle_mem_write_cmd(uint8_t *pBuffer)
 {
     uint8_t payload_len = pBuffer[2];
-    volatile uint8_t app_exist_status = *(volatile uint8_t *)APP_EXIST_STATUS_ADDRESS;
     uint32_t command_packet_len = bl_rx_buffer[0] + 1;
     uint32_t host_crc = *((uint32_t *)(bl_rx_buffer + command_packet_len - 4));
 
     if (!bootloader_verify_crc(&bl_rx_buffer[0], command_packet_len - 4, host_crc))
     {
-//        printmsg("BL_DEBUG_MSG:checksum success !!\n");
     	HAL_GPIO_TogglePin(RED_LED_GPIO_Port, RED_LED_Pin);
 
         if (current_write_addr == 0)
         {
             current_write_addr = START_APP_ADDRESS;
             execute_flash_erase(BANK_APP, NUM_OF_BANK_APP);
+            time_out_uart_receive=5000;
         }
-
+        start_time =  HAL_GetTick();
         if (payload_len > 0)
         {
             execute_mem_write(&pBuffer[3], current_write_addr, payload_len); // Sửa: PAYLOAD bắt đầu từ byte thứ 4
@@ -106,21 +129,24 @@ void bootloader_handle_mem_write_cmd(uint8_t *pBuffer)
         	printmsg("Update firmware successfully \r\n");
         	execute_flash_erase(1, 1);
         	HAL_FLASH_Unlock();
-        	if(app_exist_status==0xFF)
-        	{
-        		HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, APP_EXIST_STATUS_ADDRESS, 0xAA);
-        	}
+        	HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, APP_EXIST_STATUS_ADDRESS, 0xAA);
         	uint32_t length_app = current_write_addr-START_APP_ADDRESS;
-        	HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, CURRENT_ADDR_STORAGE, length_app);
+        	HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, LENGTH_APP_ADDRESS, length_app);
         	HAL_FLASH_Lock();
+//        	printmsg("status 2 app: 0x%02X \r\n",*(volatile uint8_t *)APP_EXIST_STATUS_ADDRESS)
+        	printmsg("current_write_addr: 0x%08X \r\n",current_write_addr);
             bootloader_jump_to_user_app();
+
         }
     }
     else
     {
-//        printmsg("BL_DEBUG_MSG:checksum fail !!\n");
-    	HAL_GPIO_WritePin(RED_LED_GPIO_Port, RED_LED_Pin, 1);
+    	printmsg("CRC fail \r\n");
         bootloader_send_nack();
+        if(++count_fail==5)
+        {
+        	bootloader_send_backup_to_app();
+        }
     }
 }
 
@@ -141,7 +167,6 @@ void bootloader_send_nack(void)
 
 uint8_t bootloader_verify_crc(uint8_t *pData, uint32_t len, uint32_t crc_host)
 {
-//    printmsg("BL_DEBUG_MSG: Verifying CRC, len = %d\n", len);
     if (len > BL_RX_LEN)
     {
 //        printmsg("BL_DEBUG_MSG: CRC length exceeds buffer size!\n");

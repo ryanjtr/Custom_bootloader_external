@@ -3,6 +3,7 @@
 
 #include "main.h"
 #include "uart_log.h"
+#include "stdbool.h"
 
 #define D_UART   &huart2 //debug
 #define C_UART   &huart6 //command
@@ -31,7 +32,7 @@
 
 #define START_APP_ADDRESS    0x08008000
 #define START_BACKUP_ADDRESS 0x08040000
-#define CURRENT_ADDR_STORAGE 0x08007FF0
+#define LENGTH_APP_ADDRESS 0x08007FF0
 #define APP_EXIST_STATUS_ADDRESS 0x08007FFE
 #define TRIGGER_JUMP_TO_APP_ADDRESS 0x08007FFD
 extern uint8_t bl_rx_buffer[BL_RX_LEN];
@@ -47,4 +48,5 @@ void bootloader_uart_write_data(uint8_t *pBuffer, uint32_t len);
 void bootloader_handle_start_update(uint8_t *pBuffer);
 uint8_t execute_mem_write(uint8_t *pBuffer, uint32_t mem_address, uint32_t len);
 uint8_t execute_flash_erase(uint8_t sector_number, uint8_t number_of_sector);
+void bootloader_send_backup_to_app();
 #endif /* UART_COMMAND_H_ */
