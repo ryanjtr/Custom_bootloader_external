@@ -51,16 +51,18 @@ class BootloaderTransmitter:
         # Nút Test Backup
         tk.Button(self.root, text="Test Backup", command=self.start_test_backup).grid(row=3, column=1, pady=10, sticky="w")
 
+        tk.Button(self.root,text="Test NACK",command=self.start_test_nack).grid(row=3, column=3, pady=20, sticky="w")
+
     def browse_file(self):
         file_path = filedialog.askopenfilename(filetypes=[("Binary files", "*.bin"), ("All files", "*.*")])
         if file_path:
             self.file_path.set(file_path)
 
-    def sender_thread(self, ser, binary_data, stop_event, max_frames=None):
+    def sender_thread(self, ser, binary_data, stop_event, max_frames=None,corrupt_crc=None):
         """Luồng gửi: Gửi frame start_update, sau đó gửi các frame file bin, và frame kết thúc nếu không giới hạn frame"""
         chunk_size = 240
         self.transmission_count = 0
-
+        
         # Gửi frame START_UPDATE (command byte = 0x56, no payload)
         start_frame = self.create_start_frame()
         print(f"Start Frame: {' '.join(hex(b) for b in start_frame)}")
@@ -93,27 +95,40 @@ class BootloaderTransmitter:
             chunk = binary_data[i:i + chunk_size]
             
             # Tạo frame
-            frame = self.create_frame(chunk)
+            if corrupt_crc:
+                frame = self.create_frame_wrong_crc(chunk)
+            else:
+                frame = self.create_frame(chunk)
 
             # In frame dưới dạng hex
             print(f"Frame {self.transmission_count}: {' '.join(hex(b) for b in frame)}")
 
+            nack_max=5
+            nack_count=0
             # Gửi frame
-            try:
-                ser.write(frame)
-                print(f"Transmission {self.transmission_count}: Sent {len(frame)} bytes")
+            while 1:
+                try:
+                    ser.write(frame)
+                    print(f"Transmission {self.transmission_count}: Sent {len(frame)} bytes")
 
-                # Chờ ACK
-                if not self.wait_for_ack(timeout=10):
-                    print(f"Transmission {self.transmission_count}: No ACK received within timeout")
+                    # Chờ ACK
+                    if not self.wait_for_ack(timeout=10):
+                        print(f"Transmission {self.transmission_count}: No ACK received within timeout, Retransmission")
+                        nack_count+=1
+                        if nack_count == nack_max:
+                            print(f"Transmission {self.transmission_count}: No ACK received within timeout")
+                            stop_event.set()
+                            return
+                        else:
+                            continue
+                    else:
+                        print(f"Transmission {self.transmission_count}: Received ACK")
+                        break
+
+                except Exception as e:
+                    print(f"Error: Failed to send data: {str(e)}")
                     stop_event.set()
                     return
-                print(f"Transmission {self.transmission_count}: Received ACK")
-
-            except Exception as e:
-                print(f"Error: Failed to send data: {str(e)}")
-                stop_event.set()
-                return
 
         # Gửi frame cuối cùng với payload rỗng (command byte = 0x57), chỉ khi không có giới hạn frame
         if not stop_event.is_set() and max_frames is None:
@@ -278,6 +293,55 @@ class BootloaderTransmitter:
         # Đóng cổng COM
         ser.close()
 
+    def start_test_nack(self):
+            # Kiểm tra file và cổng COM
+            file_path = self.file_path.get()
+            com_port = self.com_port.get()
+
+            if not file_path or not os.path.exists(file_path):
+                print("Error: Please select a valid binary file!")
+                return
+
+            if not com_port or "No COM Port" in com_port:
+                print("Error: Please select a valid COM port!")
+                return
+
+            # Đọc toàn bộ file binary
+            try:
+                with open(file_path, "rb") as f:
+                    binary_data = f.read()  # Đọc toàn bộ file
+            except Exception as e:
+                print(f"Error: Failed to read binary file: {str(e)}")
+                return
+
+            # Mở cổng COM
+            try:
+                ser = serial.Serial(com_port, self.baudrate, timeout=0.1)
+            except Exception as e:
+                print(f"Error: Failed to open COM port: {str(e)}")
+                return
+
+            # Tạo sự kiện để dừng luồng
+            stop_event = threading.Event()
+
+            # Bắt đầu luồng nhận
+            receiver = threading.Thread(target=self.receiver_thread, args=(ser, stop_event))
+            receiver.daemon = True
+            receiver.start()
+
+            # Bắt đầu luồng gửi (chỉ truyền 10 frame dữ liệu)
+            sender = threading.Thread(target=self.sender_thread, args=(ser, binary_data, stop_event, 10,1))
+            sender.daemon = True
+            sender.start()
+
+            # Chờ luồng gửi hoàn thành
+            sender.join()
+            stop_event.set()  # Đảm bảo dừng luồng nhận
+            receiver.join(timeout=1)
+
+            # Đóng cổng COM
+            ser.close()
+
     def get_crc(self, buff, length):
         Crc = 0xFFFFFFFF
         for data in buff[0:length]:
@@ -303,6 +367,24 @@ class BootloaderTransmitter:
 
         # Tính CRC32
         crc = self.get_crc(frame, len(frame))
+        frame.extend(crc.to_bytes(4, byteorder='little'))  # CRC32 (4 bytes, little-endian)
+
+        return frame
+    
+    def create_frame_wrong_crc(self, payload):
+        # Độ dài payload
+        payload_len = len(payload)
+
+        # Tạo frame ban đầu (không bao gồm CRC)
+        length_to_follow = 1 + 1 + payload_len + 4  # COMMAND_CODE + PAYLOAD_LEN + PAYLOAD + CRC
+        frame = bytearray()
+        frame.append(length_to_follow)  # LENGTH TO FOLLOW
+        frame.append(0x57)             # COMMAND CODE (BL_MEM_WRITE)
+        frame.append(payload_len)      # PAYLOAD LENGTH
+        frame.extend(payload)          # PAYLOAD
+
+        # Tính CRC32
+        crc = self.get_crc(frame, len(frame))+1
         frame.extend(crc.to_bytes(4, byteorder='little'))  # CRC32 (4 bytes, little-endian)
 
         return frame

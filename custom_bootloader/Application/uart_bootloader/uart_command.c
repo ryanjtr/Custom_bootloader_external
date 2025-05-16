@@ -10,7 +10,6 @@
 uint8_t bl_rx_buffer[BL_RX_LEN];
 static uint32_t current_write_addr = 0; // Lưu địa chỉ hiện tại để ghi tiếp
 uint8_t count_fail=0;
-uint32_t start_time;
 uint32_t time_out_uart_receive = HAL_MAX_DELAY;
 
 //| LENGTH TO FOLLOW | COMMAND CODE | PAYLOAD LENGTH | PAYLOAD       | CRC          |
@@ -79,9 +78,13 @@ void bootloader_handle_start_update(uint8_t *pBuffer)
 		        HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, START_BACKUP_ADDRESS + i, *(uint8_t*)(START_APP_ADDRESS + i));
 		    }
 		    HAL_FLASH_Lock();
-		    printmsg("status 1 app: 0x%02X \r\n",*(volatile uint8_t *)APP_EXIST_STATUS_ADDRESS);
+//		    printmsg("status 1 app: 0x%02X \r\n",*(volatile uint8_t *)APP_EXIST_STATUS_ADDRESS);
 		}
 		bootloader_send_ack(1);
+	}
+	else
+	{
+		bootloader_send_nack();
 	}
 }
 
@@ -91,7 +94,7 @@ void bootloader_send_backup_to_app()
 	execute_flash_erase(BANK_APP, NUM_OF_BANK_APP);
 	HAL_FLASH_Unlock();
 	uint32_t length_app = *(volatile uint32_t *)LENGTH_APP_ADDRESS;
-	printmsg("length_app: 0x%08X \r\n",length_app);
+//	printmsg("length_app: 0x%08X \r\n",length_app);
 	for (uint32_t i = 0; i < length_app; i++)
 	{
 		HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, START_APP_ADDRESS + i, *(uint8_t*)(START_BACKUP_ADDRESS + i));
@@ -109,14 +112,13 @@ void bootloader_handle_mem_write_cmd(uint8_t *pBuffer)
     if (!bootloader_verify_crc(&bl_rx_buffer[0], command_packet_len - 4, host_crc))
     {
     	HAL_GPIO_TogglePin(RED_LED_GPIO_Port, RED_LED_Pin);
-
+    	count_fail=0;
         if (current_write_addr == 0)
         {
             current_write_addr = START_APP_ADDRESS;
             execute_flash_erase(BANK_APP, NUM_OF_BANK_APP);
             time_out_uart_receive=5000;
         }
-        start_time =  HAL_GetTick();
         if (payload_len > 0)
         {
             execute_mem_write(&pBuffer[3], current_write_addr, payload_len); // Sửa: PAYLOAD bắt đầu từ byte thứ 4
@@ -133,10 +135,8 @@ void bootloader_handle_mem_write_cmd(uint8_t *pBuffer)
         	uint32_t length_app = current_write_addr-START_APP_ADDRESS;
         	HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, LENGTH_APP_ADDRESS, length_app);
         	HAL_FLASH_Lock();
-//        	printmsg("status 2 app: 0x%02X \r\n",*(volatile uint8_t *)APP_EXIST_STATUS_ADDRESS)
-        	printmsg("current_write_addr: 0x%08X \r\n",current_write_addr);
+//        	printmsg("current_write_addr: 0x%08X \r\n",current_write_addr);
             bootloader_jump_to_user_app();
-
         }
     }
     else
