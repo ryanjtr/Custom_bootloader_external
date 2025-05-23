@@ -67,6 +67,7 @@ void bootloader_handle_start_update(uint8_t *pBuffer)
     uint32_t host_crc = *((uint32_t *)(bl_rx_buffer + command_packet_len - 4));
 	if (!bootloader_verify_crc(&bl_rx_buffer[0], command_packet_len - 4, host_crc))
 	{
+		count_fail=0;
 		if(app_exist_status==0xAA)//start to backup app
 		{
 			printmsg("Backup old APP \r\n");
@@ -80,11 +81,20 @@ void bootloader_handle_start_update(uint8_t *pBuffer)
 		    HAL_FLASH_Lock();
 //		    printmsg("status 1 app: 0x%02X \r\n",*(volatile uint8_t *)APP_EXIST_STATUS_ADDRESS);
 		}
+		else
+		{
+			printmsg("There is no old APP \r\n");
+		}
 		bootloader_send_ack(1);
 	}
 	else
 	{
 		bootloader_send_nack();
+		printmsg("CRC fail in start update \r\n");
+        if(++count_fail==5)
+        {
+        	bootloader_jump_to_user_app();
+        }
 	}
 }
 
@@ -111,19 +121,21 @@ void bootloader_handle_mem_write_cmd(uint8_t *pBuffer)
 
     if (!bootloader_verify_crc(&bl_rx_buffer[0], command_packet_len - 4, host_crc))
     {
+
     	HAL_GPIO_TogglePin(RED_LED_GPIO_Port, RED_LED_Pin);
     	count_fail=0;
         if (current_write_addr == 0)
         {
             current_write_addr = START_APP_ADDRESS;
             execute_flash_erase(BANK_APP, NUM_OF_BANK_APP);
-            time_out_uart_receive=5000;
+            time_out_uart_receive=50000;
         }
         if (payload_len > 0)
         {
             execute_mem_write(&pBuffer[3], current_write_addr, payload_len); // Sửa: PAYLOAD bắt đầu từ byte thứ 4
             current_write_addr += payload_len;
             bootloader_send_ack(1);
+            printmsg("send ack \r\n");
         }
         else
         {
@@ -135,7 +147,7 @@ void bootloader_handle_mem_write_cmd(uint8_t *pBuffer)
         	uint32_t length_app = current_write_addr-START_APP_ADDRESS;
         	HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, LENGTH_APP_ADDRESS, length_app);
         	HAL_FLASH_Lock();
-//        	printmsg("current_write_addr: 0x%08X \r\n",current_write_addr);
+        	printmsg("current_write_addr: 0x%08X \r\n",current_write_addr);
             bootloader_jump_to_user_app();
         }
     }

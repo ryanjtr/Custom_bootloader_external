@@ -3,6 +3,7 @@
 	<item key="hasShownOverlayPopupBefore" value="true"/>
 	<item key="replaceBarOpen" value="false"/>
 	<list key="searchhistory">
+		<item value="bootloader_verify_crc"/>
 		<item value="main"/>
 		<item value="0xAA"/>
 		<item value="0xBB"/>

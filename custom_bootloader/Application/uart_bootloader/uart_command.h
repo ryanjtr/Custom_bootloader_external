@@ -5,7 +5,7 @@
 #include "uart_log.h"
 #include "stdbool.h"
 
-#define D_UART   &huart2 //debug
+#define D_UART   &huart1 //debug
 #define C_UART   &huart6 //command
 #define BL_RX_LEN  512
 

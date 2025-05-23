@@ -1,16 +1,9 @@
-20:36:39 **** Incremental Build of configuration Debug for project custom_bootloader ****
+08:28:59 **** Incremental Build of configuration Debug for project custom_bootloader ****
 make -j16 all 
-arm-none-eabi-gcc "../Application/uart_bootloader/uart_command.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F411xE -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -I"F:/NAM4/Custom_bootloader_external/custom_bootloader/Application/uart_bootloader" -I"F:/NAM4/Custom_bootloader_external/custom_bootloader/Application/uart_log" -I"F:/NAM4/Custom_bootloader_external/custom_bootloader/Application/jump_to_app" -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Application/uart_bootloader/uart_command.d" -MT"Application/uart_bootloader/uart_command.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Application/uart_bootloader/uart_command.o"
-arm-none-eabi-gcc -o "custom_bootloader.elf" @"objects.list"   -mcpu=cortex-m4 -T"F:\NAM4\Custom_bootloader_external\custom_bootloader\STM32F411VETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="custom_bootloader.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
-Finished building target: custom_bootloader.elf
- 
 arm-none-eabi-size  custom_bootloader.elf 
-arm-none-eabi-objdump -h -S custom_bootloader.elf  > "custom_bootloader.list"
    text	   data	    bss	    dec	    hex	filename
-  15520	     96	   2608	  18224	   4730	custom_bootloader.elf
+  15792	     96	   2608	  18496	   4840	custom_bootloader.elf
 Finished building: default.size.stdout
- 
-Finished building: custom_bootloader.list
  
 mkdir -p "C:/ST/STM32CubeIDE_1.15.1/STM32CubeIDE/fw/hex"
 find "C:/ST/STM32CubeIDE_1.15.1/STM32CubeIDE/fw/hex" -name "*.hex" -delete

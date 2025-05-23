@@ -60,7 +60,7 @@ class BootloaderTransmitter:
 
     def sender_thread(self, ser, binary_data, stop_event, max_frames=None,corrupt_crc=None):
         """Luồng gửi: Gửi frame start_update, sau đó gửi các frame file bin, và frame kết thúc nếu không giới hạn frame"""
-        chunk_size = 240
+        chunk_size = 249
         self.transmission_count = 0
         
         # Gửi frame START_UPDATE (command byte = 0x56, no payload)
@@ -281,7 +281,7 @@ class BootloaderTransmitter:
         receiver.start()
 
         # Bắt đầu luồng gửi (chỉ truyền 10 frame dữ liệu)
-        sender = threading.Thread(target=self.sender_thread, args=(ser, binary_data, stop_event, 10))
+        sender = threading.Thread(target=self.sender_thread, args=(ser, binary_data, stop_event, 1))
         sender.daemon = True
         sender.start()
 
@@ -365,7 +365,7 @@ class BootloaderTransmitter:
         frame.append(payload_len)      # PAYLOAD LENGTH
         frame.extend(payload)          # PAYLOAD
 
-        # Tính CRC32
+        # Tính CRC32'
         crc = self.get_crc(frame, len(frame))
         frame.extend(crc.to_bytes(4, byteorder='little'))  # CRC32 (4 bytes, little-endian)
 
